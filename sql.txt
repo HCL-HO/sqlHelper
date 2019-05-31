@@ -1,0 +1,73 @@
+  with c1 as (
+ 			 select office.INTL_DISTRICT_CODE as cc_RegionCode,
+ 			        dca.off_code as cc_OffCode,
+ 			        '2' as CC_ORDERING,
+ 			        'MONTH' as cc_ChkType,
+ 			        null as cc_IssueDate,
+ 			        ssc.sub_stk_code as cc_SubStkCode,
+ 			        ssc.sub_stk_desc as cc_SubStkDesc,
+ 			        cc.schk_stat as cc_ChkStatus,
+ 			        coalesce(cc.allocated_user_id, hh.allocated_user_id, ssc.allocated_user_id) as allocated_user_id
+ 			   from c_scm_sub_stk_ctrl ssc
+ 			   JOIN c_scm_main_stk_ctrl mstk ON mstk.dca_id = ssc.dca_id
+ 			        left outer join t_dca_schk_ss_ctrl cc
+ 			             inner join t_dca_schk_ss_cash_summ ss
+ 			                   left outer join t_dca_schk_ss_bal bb
+ 			                        on ss.schk_type = bb.schk_type
+ 			                       and ss.schk_date = bb.schk_date
+ 			                       and ss.dca_id = bb.dca_id
+ 			                       and ss.sub_stk_code = bb.sub_stk_code
+ 			                       and ss.allocated_user_id = bb.allocated_user_id
+ 			                   on ss.schk_type = cc.schk_type
+ 			                  and ss.schk_date = cc.schk_date
+ 			                  and ss.dca_id = cc.dca_id
+ 			                  and ss.sub_stk_code = cc.sub_stk_code
+ 			                  and ss.allocated_user_id = cc.allocated_user_id
+ 			          on ssc.dca_id = cc.dca_id
+ 			         and ssc.sub_stk_code = cc.sub_stk_code
+ 			         and cc.schk_type = 'SCHK_MTH'
+ 			         and cc.schk_date between trunc(sysdate, 'mm') and LAST_DAY(sysdate)
+ 			       inner join c_dca_hdr dca on dca.dca_id = ssc.dca_id
+ 			       inner join c_sys_off_rollout ro on ro.off_code = dca.off_code
+ 			 	  inner join c_sys_off office on office.off_code = dca.off_code
+ 			       LEFT join t_scm_stk_assign_hist hh
+ 			         on ssc.sub_stk_code = hh.stk_code
+ 			         and hh.stk_type = 'S'
+ 			         and greatest(ro.rollout_date, LEAST(sysdate, CASE WHEN trunc(sysdate) = trunc(sysdate, 'mm') THEN sysdate ELSE trunc(sysdate, 'mm') END))
+ 			               between trunc(hh.assign_dttm) and coalesce(hh.withdraw, LEAST(sysdate, CASE WHEN trunc(sysdate) = LAST_DAY(sysdate) THEN sysdate ELSE LAST_DAY(sysdate)+1 END))
+ 			         and LEAST(sysdate, CASE WHEN trunc(sysdate) = LAST_DAY(sysdate) THEN sysdate ELSE LAST_DAY(sysdate) END)
+ 			               between trunc(hh.assign_dttm) and coalesce(hh.withdraw, LEAST(sysdate, CASE WHEN trunc(sysdate) = LAST_DAY(sysdate) THEN sysdate ELSE LAST_DAY(sysdate)+1 END))
+ 			 where
+ 			 ssc.sub_stk_type = 'P'
+ 			 and ( cc.allocated_user_id IS NOT NULL OR
+ 			      (ssc.allocated_user_id IS NOT NULL AND trunc(sysdate) between trunc(sysdate, 'mm') and LAST_DAY(sysdate) AND mstk.allocated_user_id <> ssc.allocated_user_id ) OR
+ 			      (cc.allocated_user_id IS NULL AND  hh.allocated_user_id is not null AND
+ 			 	  hh.allocated_user_id not in (
+ 			                                    select hh2.allocated_user_id from t_scm_stk_assign_hist hh2
+ 			                                    where hh2.stk_type = 'M' and hh2.stk_code = ssc.dca_id
+ 			                                    and (greatest(ro.rollout_date, LEAST(sysdate, CASE WHEN trunc(sysdate) = trunc(sysdate, 'mm') THEN sysdate ELSE trunc(sysdate, 'mm') END))
+ 			                                          between trunc(hh2.assign_dttm) and coalesce(hh2.withdraw, LEAST(sysdate, CASE WHEN trunc(sysdate) = LAST_DAY(sysdate) THEN sysdate ELSE LAST_DAY(sysdate)+1 END))
+ 			                                    	OR LEAST(sysdate, CASE WHEN trunc(sysdate) = LAST_DAY(sysdate) THEN sysdate ELSE LAST_DAY(sysdate) END)
+ 			                                          between trunc(hh2.assign_dttm) and coalesce(hh2.withdraw, LEAST(sysdate, CASE WHEN trunc(sysdate) = LAST_DAY(sysdate) THEN sysdate ELSE LAST_DAY(sysdate)+1 END)))
+ 			                                   )
+ 			 	  )
+ 			     )
+ 			 AND cc.schk_stat IS NULL
+ 			 group by office.INTL_DISTRICT_CODE, dca.off_code, cc.schk_type, ssc.sub_stk_code, ssc.sub_stk_desc, cc.schk_stat, coalesce(cc.allocated_user_id, hh.allocated_user_id, ssc.allocated_user_id)
+ 			 ), C2 as (
+ 			 select C.INTL_DISTRICT_CODE, c.off_code, o.cc_ordering, o.CC_CHKTYPE, o.CC_REMINDERISSUEDATE
+ 			 from C_SYS_OFF C
+ 			 , (
+ 			   select '2' as CC_ORDERING, 'MONTH' as CC_CHKTYPE,  max(to_date(parm_value||'-'||to_char(trunc(sysdate, 'mm'), 'mm-yyyy'),'dd-mm-yyyy')) as CC_REMINDERISSUEDATE
+ 			           from c_sys_parm_main
+ 			          where parm_name = 'ALT_SCHK_MTH_DAY_OF_MTH'
+ 			            and trunc(sysdate, 'mm') <= exp_date
+ 			            and LAST_DAY(sysdate) >= eff_date
+ 			            and to_date(parm_value||'-'||to_char(trunc(sysdate, 'mm'), 'mm-yyyy'),'dd-mm-yyyy') between eff_date and exp_date
+ 			 ) O
+ 			 )
+ 			 select distinct C2.OFF_CODE as cc_OffCode
+ 			 from C1, C2
+ 			   where C2.OFF_CODE = C1.CC_OFFCODE
+ 			   and c2.cc_ordering = c1.cc_ordering
+ 			 order by 1 ;
